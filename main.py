@@ -1,4 +1,3 @@
-
 import discord
 from discord.ext import commands, tasks
 import json
@@ -6,19 +5,12 @@ import os
 import random
 from datetime import timedelta, datetime
 from aiohttp import web
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from pymongo import MongoClient, DESCENDING
 import threading
 
 TOKEN = os.getenv('DISCORD_TOKEN')
-DATABASE_URL = os.getenv('DATABASE_URL')
-
 if not TOKEN:
     print("ERROR: DISCORD_TOKEN is not set")
-    exit(1)
-
-if not DATABASE_URL:
-    print("ERROR: DATABASE_URL is not set")
     exit(1)
 
 intents = discord.Intents.default()
@@ -37,81 +29,22 @@ TWITCH_OAUTH_TOKEN = os.getenv('TWITCH_OAUTH_TOKEN')
 NOTIFY_CHANNEL_ID = 1332817863135723531 
 TwitchAPIURL = 'https://api.twitch.tv/helix/streams?user_login=ShenFRusH'
 is_streaming = False
+mongo_uri = os.getenv('MONGO_URI')
+mongo_client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=True)
+db = mongo_client["shenbot"]
+users_collection = db["users"]
 
-def init_database():
-    """Инициализация базы данных и создание таблицы пользователей"""
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # Создаем таблицу пользователей если её нет
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id VARCHAR(255) PRIMARY KEY,
-                xp INTEGER DEFAULT 0,
-                level INTEGER DEFAULT 0,
-                last_message_day DATE DEFAULT CURRENT_DATE
-            )
-        ''')
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("База данных инициализирована успешно")
-    except Exception as e:
-        print(f"Ошибка инициализации базы данных: {e}")
 
 def get_user_data(user_id):
-    """Получение данных пользователя из PostgreSQL"""
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
-        user = cur.fetchone()
-        
-        if not user:
-            # Создаем нового пользователя
-            cur.execute(
-                "INSERT INTO users (user_id, xp, level, last_message_day) VALUES (%s, %s, %s, %s)",
-                (str(user_id), 0, 0, datetime.today().date())
-            )
-            conn.commit()
-            user = {"user_id": str(user_id), "xp": 0, "level": 0, "last_message_day": datetime.today().date()}
-        else:
-            user = dict(user)
-        
-        cur.close()
-        conn.close()
-        return user
-    except Exception as e:
-        print(f"Ошибка получения данных пользователя: {e}")
-        return {"user_id": str(user_id), "xp": 0, "level": 0, "last_message_day": datetime.today().date()}
+    user = users_collection.find_one({"_id": str(user_id)})
+    if not user:
+        user = {"_id": str(user_id), "xp": 0, "level": 0, "last_message_day": str(datetime.today().date())}
+        users_collection.insert_one(user)
+    return user
 
 def update_user_data(user_id, data):
-    """Обновление данных пользователя в PostgreSQL"""
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        cur.execute(
-            "UPDATE users SET xp = %s, level = %s, last_message_day = %s WHERE user_id = %s",
-            (data["xp"], data["level"], data["last_message_day"], str(user_id))
-        )
-        
-        if cur.rowcount == 0:
-            # Если пользователь не найден, создаем его
-            cur.execute(
-                "INSERT INTO users (user_id, xp, level, last_message_day) VALUES (%s, %s, %s, %s)",
-                (str(user_id), data["xp"], data["level"], data["last_message_day"])
-            )
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        print(f"Данные пользователя {user_id} обновлены")
-    except Exception as e:
-        print(f"Ошибка обновления данных пользователя: {e}")
+    result = users_collection.update_one({"_id": str(user_id)}, {"$set": data}, upsert=True)
+    print(f"Обновлено документов: {result.modified_count}, апсертов: {result.upserted_id}")
 
 async def check_stream_status():
     global is_streaming
@@ -135,7 +68,6 @@ async def check_stream_status():
             else:
                 print("Нет данных в ответе Twitch API!")
                 is_streaming = False
-
 async def send_stream_notification(viewer_count):
     channel = bot.get_channel(NOTIFY_CHANNEL_ID)  
     stream_url = f"https://www.twitch.tv/{TwitchChannel}"  
@@ -150,26 +82,20 @@ async def send_stream_notification(viewer_count):
     embed.set_footer(text="Shenята | TWITCH")
     if channel:
         await channel.send(f"@everyone Шен подрубил стрим! Заходите, не пропустите!", embed=embed)
-
 @tasks.loop(minutes=1)  
 async def auto_notify_stream():
     await check_stream_status()
-
 @bot.event
 async def on_ready():
     print(f'Бот {bot.user} подключён к Discord!')
-    init_database()  # Инициализируем базу данных
     auto_notify_stream.start() 
-
 LEVEL_ROLES = {
     10: '🟥 Паралелепипед',
     15: '👾 Полупок',
     20: '✨ VIP',
 }
-
 GIF_WELCOME_URL = 'https://media.discordapp.net/attachments/685815150376255502/1282276742664425504/TIIINzVMap8.gif'
 GIF_GOODBYE_URL = 'https://media.discordapp.net/attachments/937113595219693588/1333162715853623406/ezgif-2-bb540f2ee7.gif'
-
 def has_required_role():
     async def predicate(ctx):
         role = discord.utils.get(ctx.author.roles, name=REQUIRED_ROLE_NAME)
@@ -178,7 +104,18 @@ def has_required_role():
             return False
         return True
     return commands.check(predicate)
+@bot.event
+async def on_ready():
+    print(f'Бот {bot.user} подключён к Discord!')
 
+    for guild in bot.guilds:
+        for member in guild.members:
+            if member.bot:
+                continue
+            user_id = str(member.id)
+            get_user_data(user_id)  # просто инициализируем, если не существует
+
+    auto_notify_stream.start()
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -190,13 +127,13 @@ async def on_message(message):
     user_data = get_user_data(user_id)  # получаем или создаём в базе
 
     current_day = str(datetime.today().date())
-    if str(user_data['last_message_day']) != current_day:
+    if user_data['last_message_day'] != current_day:
         xp_gain = random.randint(10, 15)
         user_data['last_message_day'] = current_day
     else:
         xp_gain = random.randint(1, 5)
     user_data["xp"] += xp_gain  # <- тут был пропуск, нужно прибавлять XP всегда
-    update_user_data(user_id, user_data)  # сохраняем в PostgreSQL
+    update_user_data(user_id, user_data)  # сохраняем в MongoDB
 
     current_xp = user_data["xp"]
     current_level = user_data["level"]
@@ -234,7 +171,6 @@ async def on_message(message):
             embed.set_footer(text="Shenята | TWITCH")
             await log_channel.send(embed=embed)
     await bot.process_commands(message)
-
 @bot.command(name='модер')
 @has_required_role()
 @commands.has_permissions(manage_roles=True, manage_messages=True)
@@ -280,7 +216,6 @@ async def moder(ctx):
         await ctx.send('❌ У меня нет прав на изменение ролей или удаление сообщений.')
     except Exception as e:
         await ctx.send(f"⚠️ Ошибка: {e}")
-
 @bot.command(name='снять')
 @has_required_role()
 @commands.has_permissions(manage_roles=True)
@@ -331,7 +266,6 @@ async def remove_mod(ctx):
         await ctx.send('❌ У меня нет прав на изменение ролей.')
     except Exception as e:
         await ctx.send(f"⚠️ Ошибка: {e}")
-
 @bot.command(name='ранг')
 async def rank(ctx, member: discord.Member = None):
     # Проверка, чтобы команда использовалась только в нужном канале или пользователем с ролью ✭
@@ -369,7 +303,6 @@ async def rank(ctx, member: discord.Member = None):
     embed.add_field(name="До следующего уровня", value=f"{xp_needed} XP")
 
     await ctx.send(embed=embed)
-
 @bot.command(name='топ')
 async def top(ctx):
     if not discord.utils.get(ctx.author.roles, name='✭') and ctx.channel.id != COMMANDS_CHANNEL_ID:
@@ -378,37 +311,25 @@ async def top(ctx):
         await msg.delete(delay=3)
         return
 
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("SELECT * FROM users ORDER BY level DESC, xp DESC LIMIT 10")
-        top_users = cur.fetchall()
-        
-        cur.close()
-        conn.close()
-        
-        if not top_users:
-            await ctx.send("Пока никто не набрал XP.")
-            return
+    top_users = list(users_collection.find().sort([("level", DESCENDING), ("xp", DESCENDING)]).limit(10))
+    if not top_users:
+        await ctx.send("Пока никто не набрал XP.")
+        return
 
-        embed = discord.Embed(title="🔥 Топ 10 по уровню", color=discord.Color.blue())
-        for i, user_data in enumerate(top_users):
-            member = ctx.guild.get_member(int(user_data["user_id"]))
-            name = member.display_name if member else f"Пользователь {user_data['user_id']}"
-            level = user_data["level"]
-            xp = user_data["xp"]
-            next_level_xp = (level * 100) + 200
-            embed.add_field(
-                name=f"{i + 1}. {name}",
-                value=f"Уровень: **{level}**\nXP: **{xp}** / {next_level_xp}",
-                inline=False
-            )
+    embed = discord.Embed(title="🔥 Топ 10 по уровню", color=discord.Color.blue())
+    for i, user_data in enumerate(top_users):
+        member = ctx.guild.get_member(int(user_data["_id"]))
+        name = member.display_name if member else f"Пользователь {user_data['_id']}"
+        level = user_data["level"]
+        xp = user_data["xp"]
+        next_level_xp = (level * 100) + 200
+        embed.add_field(
+            name=f"{i + 1}. {name}",
+            value=f"Уровень: **{level}**\nXP: **{xp}** / {next_level_xp}",
+            inline=False
+        )
 
-        await ctx.send(embed=embed)
-    except Exception as e:
-        await ctx.send(f"Ошибка получения топа: {e}")
-
+    await ctx.send(embed=embed)
 @bot.command(name='установить')
 @has_required_role()
 async def set_level(ctx, member: discord.Member, level: int):
@@ -448,7 +369,6 @@ async def set_level(ctx, member: discord.Member, level: int):
         )
         embed.set_footer(text="Shenята | TWITCH")
         await log_channel.send(embed=embed)
-
 fairy_tales = [
     {
         "title": "Сказка о храброй принцессе и драконах",
@@ -502,7 +422,6 @@ fairy_tales = [
         )
     }
 ]
-
 @bot.command(name='сказка')
 async def fairy_tale(ctx):
     if not discord.utils.get(ctx.author.roles, name='✭') and ctx.channel.id != COMMANDS_CHANNEL_ID:
@@ -520,7 +439,6 @@ async def fairy_tale(ctx):
     )
     embed.set_footer(text="Shenята | TWITCH - Сказка на ночь")
     await ctx.send(embed=embed) 
-
 @bot.command(name='помощь')
 async def help_command(ctx):
     # Проверяем, есть ли у пользователя роль "✭" или он в нужном канале
@@ -576,19 +494,21 @@ async def help_command(ctx):
             "`!топ` — показать топ 10 по уровню.\n"
         )
 
+    from aiohttp import web
+    import threading
+
+    async def handle(request):
+        return web.Response(text="Bot is running")
+
+    app = web.Application()
+    app.router.add_get('/', handle)
+
+    def run_web():
+        web.run_app(app, port=3000)
+
+    threading.Thread(target=run_web).start()
+
     await ctx.send(help_text)
-
-async def handle(request):
-    return web.Response(text="Bot is running")
-
-app = web.Application()
-app.router.add_get('/', handle)
-
-def run_web():
-    web.run_app(app, host='0.0.0.0', port=3000)
-
-threading.Thread(target=run_web, daemon=True).start()
-
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
@@ -596,5 +516,4 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
     await ctx.send(f"Ошибка: {error}")
-
 bot.run(TOKEN)
