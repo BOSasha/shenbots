@@ -531,6 +531,203 @@ async def help_command(ctx):
     threading.Thread(target=run_web).start()
 
     await ctx.send(help_text)
+
+def has_moderator_role():
+    async def predicate(ctx):
+        has_star = discord.utils.get(ctx.author.roles, name=REQUIRED_ROLE_NAME)
+        has_mod = discord.utils.get(ctx.author.roles, name=MODERATOR_ROLE_NAME)
+        if has_star is None and has_mod is None:
+            await ctx.send("🚫 У тебя нет прав на выполнение этой команды!")
+            return False
+        return True
+    return commands.check(predicate)
+
+@bot.command(name='мьют')
+@has_moderator_role()
+@commands.has_permissions(manage_roles=True)
+async def mute(ctx, member: discord.Member = None, *, duration: str = "10m"):
+    if member is None:
+        await ctx.send("Укажи пользователя для мьюта!")
+        return
+    
+    if member == ctx.author:
+        await ctx.send("Ты не можешь замутить самого себя!")
+        return
+    
+    # Проверяем, есть ли роль "Muted"
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
+        # Создаем роль "Muted" если её нет
+        muted_role = await ctx.guild.create_role(name="Muted", reason="Роль для мьюта")
+        # Запрещаем отправлять сообщения во всех каналах
+        for channel in ctx.guild.channels:
+            await channel.set_permissions(muted_role, send_messages=False, add_reactions=False)
+    
+    # Парсим время
+    time_dict = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    time_amount = int(duration[:-1])
+    time_unit = duration[-1]
+    
+    if time_unit not in time_dict:
+        await ctx.send("Неверный формат времени! Используй: s (секунды), m (минуты), h (часы), d (дни)")
+        return
+    
+    mute_seconds = time_amount * time_dict[time_unit]
+    
+    try:
+        await member.add_roles(muted_role, reason=f"Мьют от {ctx.author}")
+        
+        # Логирование
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="🔇 Пользователь замучен",
+                description=f"Модератор: {ctx.author.mention}\nПользователь: {member.mention}\nВремя: {duration}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text="Shenята | TWITCH")
+            await log_channel.send(embed=embed)
+        
+        await ctx.send(f"🔇 {member.mention} замучен на {duration}")
+        
+        # Автоматическое размьютивание
+        await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=mute_seconds))
+        if muted_role in member.roles:
+            await member.remove_roles(muted_role, reason="Автоматическое размьютивание")
+            
+    except discord.Forbidden:
+        await ctx.send("❌ У меня нет прав на изменение ролей!")
+
+@bot.command(name='размьют')
+@has_moderator_role()
+@commands.has_permissions(manage_roles=True)
+async def unmute(ctx, member: discord.Member = None):
+    if member is None:
+        await ctx.send("Укажи пользователя для размьюта!")
+        return
+    
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
+        await ctx.send("Роль 'Muted' не найдена!")
+        return
+    
+    if muted_role not in member.roles:
+        await ctx.send(f"{member.mention} не замучен!")
+        return
+    
+    try:
+        await member.remove_roles(muted_role, reason=f"Размьют от {ctx.author}")
+        
+        # Логирование
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="🔊 Пользователь размучен",
+                description=f"Модератор: {ctx.author.mention}\nПользователь: {member.mention}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text="Shenята | TWITCH")
+            await log_channel.send(embed=embed)
+        
+        await ctx.send(f"🔊 {member.mention} размучен")
+        
+    except discord.Forbidden:
+        await ctx.send("❌ У меня нет прав на изменение ролей!")
+
+@bot.command(name='бан')
+@has_moderator_role()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member = None, *, reason="Причина не указана"):
+    if member is None:
+        await ctx.send("Укажи пользователя для бана!")
+        return
+    
+    if member == ctx.author:
+        await ctx.send("Ты не можешь забанить самого себя!")
+        return
+    
+    try:
+        await member.ban(reason=f"Забанен модератором {ctx.author}: {reason}")
+        
+        # Логирование
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="🔨 Пользователь забанен",
+                description=f"Модератор: {ctx.author.mention}\nПользователь: {member.mention}\nПричина: {reason}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                color=discord.Color.red()
+            )
+            embed.set_footer(text="Shenята | TWITCH")
+            await log_channel.send(embed=embed)
+        
+        await ctx.send(f"🔨 {member.mention} забанен. Причина: {reason}")
+        
+    except discord.Forbidden:
+        await ctx.send("❌ У меня нет прав на бан пользователей!")
+
+@bot.command(name='разбан')
+@has_moderator_role()
+@commands.has_permissions(ban_members=True)
+async def unban(ctx, *, member_name):
+    banned_users = [entry async for entry in ctx.guild.bans()]
+    
+    for ban_entry in banned_users:
+        user = ban_entry.user
+        if user.name == member_name or str(user) == member_name:
+            try:
+                await ctx.guild.unban(user, reason=f"Разбанен модератором {ctx.author}")
+                
+                # Логирование
+                log_channel = bot.get_channel(LOG_CHANNEL_ID)
+                if log_channel:
+                    embed = discord.Embed(
+                        title="✅ Пользователь разбанен",
+                        description=f"Модератор: {ctx.author.mention}\nПользователь: {user.mention}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                        color=discord.Color.green()
+                    )
+                    embed.set_footer(text="Shenята | TWITCH")
+                    await log_channel.send(embed=embed)
+                
+                await ctx.send(f"✅ {user.mention} разбанен")
+                return
+                
+            except discord.Forbidden:
+                await ctx.send("❌ У меня нет прав на разбан пользователей!")
+                return
+    
+    await ctx.send("Пользователь с таким именем не найден в списке забаненных!")
+
+@bot.command(name='кик')
+@has_moderator_role()
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member = None, *, reason="Причина не указана"):
+    if member is None:
+        await ctx.send("Укажи пользователя для кика!")
+        return
+    
+    if member == ctx.author:
+        await ctx.send("Ты не можешь кикнуть самого себя!")
+        return
+    
+    try:
+        await member.kick(reason=f"Кикнут модератором {ctx.author}: {reason}")
+        
+        # Логирование
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="👢 Пользователь кикнут",
+                description=f"Модератор: {ctx.author.mention}\nПользователь: {member.mention}\nПричина: {reason}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text="Shenята | TWITCH")
+            await log_channel.send(embed=embed)
+        
+        await ctx.send(f"👢 {member.mention} кикнут. Причина: {reason}")
+        
+    except discord.Forbidden:
+        await ctx.send("❌ У меня нет прав на кик пользователей!")
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
