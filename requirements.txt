@@ -1,3 +1,4 @@
+
 discord.py
-pymongo[srv]
 aiohttp
+psycopg2-binary
