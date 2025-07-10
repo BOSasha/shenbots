@@ -4,9 +4,32 @@ import json
 import os
 import random
 from datetime import timedelta, datetime
+import aiohttp
 from aiohttp import web
 from pymongo import MongoClient, DESCENDING
 import threading
+from flask import Flask
+
+mongo_uri = "mongodb://localhost:27017/myDatabase"
+
+# Replace with your actual URI
+mongo_uri = "mongodb://localhost:27017/myDatabase"
+client = MongoClient(mongo_uri)
+
+try:
+    db = client.myDatabase  # Access your database
+    print("Connected to MongoDB!")
+    # Your operations here
+finally:
+    client.close()
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "Hello, Replit!"
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
