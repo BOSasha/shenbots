@@ -549,11 +549,11 @@ async def mute(ctx, member: discord.Member = None, *, args="10m"):
     if member is None:
         await ctx.send("Укажи пользователя для мьюта!")
         return
-    
+
     if member == ctx.author:
         await ctx.send("Ты не можешь замутить самого себя!")
         return
-    
+
     # Проверяем, есть ли роль "Muted"
     muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
     if not muted_role:
@@ -562,12 +562,12 @@ async def mute(ctx, member: discord.Member = None, *, args="10m"):
         # Запрещаем отправлять сообщения во всех каналах
         for channel in ctx.guild.channels:
             await channel.set_permissions(muted_role, send_messages=False, add_reactions=False)
-    
+
     # Парсим аргументы: время и причину
     parts = args.split(' ', 1)  # Разделяем на максимум 2 части
     duration = parts[0]
     reason = parts[1] if len(parts) > 1 else "Причина не указана"
-    
+
     # Парсим время (поддержка русского и английского)
     time_dict = {
         "s": 1, "с": 1, "sec": 1, "сек": 1,
@@ -575,26 +575,26 @@ async def mute(ctx, member: discord.Member = None, *, args="10m"):
         "h": 3600, "ч": 3600, "hour": 3600, "час": 3600,
         "d": 86400, "д": 86400, "day": 86400, "день": 86400
     }
-    
+
     # Ищем число и единицу времени
     import re
     match = re.match(r'(\d+)([a-zA-Zа-яА-Я]+)', duration)
     if not match:
         await ctx.send("Неверный формат времени! Используй: 10м, 5h, 2д, 30min и т.д.")
         return
-    
+
     time_amount = int(match.group(1))
     time_unit = match.group(2).lower()
-    
+
     if time_unit not in time_dict:
         await ctx.send("Неверная единица времени! Используй: с/s, м/m, ч/h, д/d")
         return
-    
+
     mute_seconds = time_amount * time_dict[time_unit]
-    
+
     try:
         await member.add_roles(muted_role, reason=f"Мьют от {ctx.author}")
-        
+
         # Логирование
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -605,9 +605,9 @@ async def mute(ctx, member: discord.Member = None, *, args="10m"):
             )
             embed.set_footer(text="Shenята | TWITCH")
             await log_channel.send(embed=embed)
-        
+
         await ctx.send(f"🔇 {member.mention} замучен на {duration}. Причина: {reason}")
-        
+
         # Автоматическое размьютивание
         await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=mute_seconds))
         if muted_role in member.roles:
@@ -621,7 +621,7 @@ async def mute(ctx, member: discord.Member = None, *, args="10m"):
                 )
                 embed.set_footer(text="Shenята | TWITCH")
                 await log_channel.send(embed=embed)
-            
+
     except discord.Forbidden:
         await ctx.send("❌ У меня нет прав на изменение ролей!")
 
@@ -632,19 +632,19 @@ async def unmute(ctx, member: discord.Member = None):
     if member is None:
         await ctx.send("Укажи пользователя для размьюта!")
         return
-    
+
     muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
     if not muted_role:
         await ctx.send("Роль 'Muted' не найдена!")
         return
-    
+
     if muted_role not in member.roles:
         await ctx.send(f"{member.mention} не замучен!")
         return
-    
+
     try:
         await member.remove_roles(muted_role, reason=f"Размьют от {ctx.author}")
-        
+
         # Логирование
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -655,9 +655,9 @@ async def unmute(ctx, member: discord.Member = None):
             )
             embed.set_footer(text="Shenята | TWITCH")
             await log_channel.send(embed=embed)
-        
+
         await ctx.send(f"🔊 {member.mention} размучен")
-        
+
     except discord.Forbidden:
         await ctx.send("❌ У меня нет прав на изменение ролей!")
 
@@ -668,19 +668,20 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
     if member is None:
         await ctx.send("Укажи пользователя для бана!")
         return
-    
+
     if member == ctx.author:
         await ctx.send("Ты не можешь забанить самого себя!")
         return
-    
+
     # Парсим аргументы: время и причину
     ban_seconds = None
     reason = "Причина не указана"
-    
+    duration_str = "навсегда"
+
     if args:
         parts = args.split(' ', 1)  # Разделяем на максимум 2 части
         first_part = parts[0]
-        
+
         # Проверяем, является ли первая часть временем
         time_dict = {
             "s": 1, "с": 1, "sec": 1, "сек": 1,
@@ -688,15 +689,16 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
             "h": 3600, "ч": 3600, "hour": 3600, "час": 3600,
             "d": 86400, "д": 86400, "day": 86400, "день": 86400
         }
-        
+
         import re
         match = re.match(r'(\d+)([a-zA-Zа-яА-Я]+)', first_part)
         if match:
             time_amount = int(match.group(1))
             time_unit = match.group(2).lower()
-            
+
             if time_unit in time_dict:
                 ban_seconds = time_amount * time_dict[time_unit]
+                duration_str = first_part
                 # Если есть вторая часть, это причина
                 if len(parts) > 1:
                     reason = parts[1]
@@ -706,14 +708,14 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
         else:
             # Если первая часть не время, то всё это причина
             reason = args
-    
+
     try:
         await member.ban(reason=f"Забанен модератором {ctx.author}: {reason}")
-        
+
         # Логирование
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            ban_type = f"временно на {first_part}" if ban_seconds else "навсегда"
+            ban_type = f"временно на {duration_str}" if ban_seconds else "навсегда"
             embed = discord.Embed(
                 title="🔨 Пользователь забанен",
                 description=f"Модератор: {ctx.author.mention}\nПользователь: {member.mention}\nВремя: {ban_type}\nПричина: {reason}\nДата: {ctx.message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
@@ -721,9 +723,9 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
             )
             embed.set_footer(text="Shenята | TWITCH")
             await log_channel.send(embed=embed)
-        
+
         if ban_seconds:
-            await ctx.send(f"🔨 {member.mention} временно забанен на {first_part}. Причина: {reason}")
+            await ctx.send(f"🔨 {member.mention} временно забанен на {duration_str}. Причина: {reason}")
             # Автоматический разбан
             await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=ban_seconds))
             try:
@@ -741,7 +743,7 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
                 pass  # Пользователь мог быть разбанен вручную
         else:
             await ctx.send(f"🔨 {member.mention} забанен навсегда. Причина: {reason}")
-        
+
     except discord.Forbidden:
         await ctx.send("❌ У меня нет прав на бан пользователей!")
 
@@ -750,13 +752,13 @@ async def ban(ctx, member: discord.Member = None, *, args=""):
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, *, member_name):
     banned_users = [entry async for entry in ctx.guild.bans()]
-    
+
     for ban_entry in banned_users:
         user = ban_entry.user
         if user.name == member_name or str(user) == member_name:
             try:
                 await ctx.guild.unban(user, reason=f"Разбанен модератором {ctx.author}")
-                
+
                 # Логирование
                 log_channel = bot.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
@@ -767,14 +769,14 @@ async def unban(ctx, *, member_name):
                     )
                     embed.set_footer(text="Shenята | TWITCH")
                     await log_channel.send(embed=embed)
-                
+
                 await ctx.send(f"✅ {user.mention} разбанен")
                 return
-                
+
             except discord.Forbidden:
                 await ctx.send("❌ У меня нет прав на разбан пользователей!")
                 return
-    
+
     await ctx.send("Пользователь с таким именем не найден в списке забаненных!")
 
 @bot.command(name='кик')
@@ -784,14 +786,14 @@ async def kick(ctx, member: discord.Member = None, *, reason="Причина н�
     if member is None:
         await ctx.send("Укажи пользователя для кика!")
         return
-    
+
     if member == ctx.author:
         await ctx.send("Ты не можешь кикнуть самого себя!")
         return
-    
+
     try:
         await member.kick(reason=f"Кикнут модератором {ctx.author}: {reason}")
-        
+
         # Логирование
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -802,9 +804,9 @@ async def kick(ctx, member: discord.Member = None, *, reason="Причина н�
             )
             embed.set_footer(text="Shenята | TWITCH")
             await log_channel.send(embed=embed)
-        
+
         await ctx.send(f"👢 {member.mention} кикнут. Причина: {reason}")
-        
+
     except discord.Forbidden:
         await ctx.send("❌ У меня нет прав на кик пользователей!")
 
