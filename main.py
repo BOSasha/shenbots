@@ -563,13 +563,26 @@ async def mute(ctx, member: discord.Member = None, *, duration: str = "10m"):
         for channel in ctx.guild.channels:
             await channel.set_permissions(muted_role, send_messages=False, add_reactions=False)
     
-    # Парсим время
-    time_dict = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-    time_amount = int(duration[:-1])
-    time_unit = duration[-1]
+    # Парсим время (поддержка русского и английского)
+    time_dict = {
+        "s": 1, "с": 1, "sec": 1, "сек": 1,
+        "m": 60, "м": 60, "min": 60, "мин": 60,
+        "h": 3600, "ч": 3600, "hour": 3600, "час": 3600,
+        "d": 86400, "д": 86400, "day": 86400, "день": 86400
+    }
+    
+    # Ищем число и единицу времени
+    import re
+    match = re.match(r'(\d+)([a-zA-Zа-яА-Я]+)', duration)
+    if not match:
+        await ctx.send("Неверный формат времени! Используй: 10м, 5h, 2д, 30min и т.д.")
+        return
+    
+    time_amount = int(match.group(1))
+    time_unit = match.group(2).lower()
     
     if time_unit not in time_dict:
-        await ctx.send("Неверный формат времени! Используй: s (секунды), m (минуты), h (часы), d (дни)")
+        await ctx.send("Неверная единица времени! Используй: с/s, м/m, ч/h, д/d")
         return
     
     mute_seconds = time_amount * time_dict[time_unit]
@@ -594,6 +607,15 @@ async def mute(ctx, member: discord.Member = None, *, duration: str = "10m"):
         await discord.utils.sleep_until(discord.utils.utcnow() + timedelta(seconds=mute_seconds))
         if muted_role in member.roles:
             await member.remove_roles(muted_role, reason="Автоматическое размьютивание")
+            # Логирование автоматического размьюта
+            if log_channel:
+                embed = discord.Embed(
+                    title="🔊 Автоматическое размьютивание",
+                    description=f"Пользователь: {member.mention}\nВремя мьюта истекло\nДата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    color=discord.Color.green()
+                )
+                embed.set_footer(text="Shenята | TWITCH")
+                await log_channel.send(embed=embed)
             
     except discord.Forbidden:
         await ctx.send("❌ У меня нет прав на изменение ролей!")
