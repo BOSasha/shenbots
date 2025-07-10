@@ -22,14 +22,13 @@ try:
     # Your operations here
 finally:
     client.close()
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+
+# Flask app definition
 app = Flask(__name__)
+
 @app.route('/')
 def home():
     return "Hello, Replit!"
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
